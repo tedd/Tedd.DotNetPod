@@ -5,7 +5,8 @@ using System.Text.Json;
 
 namespace Tedd.DotNetPod;
 
-public sealed record PodStatus(string Id, string Container, string Fingerprint, string State, bool Ready, long Restarts);
+public sealed record PodStatus(string Id, string Container, string Fingerprint, string State, bool Ready, long Restarts,
+    DateTimeOffset StartedAt = default, DateTimeOffset? LastHeartbeat = null);
 public sealed class PodConflictException(string message) : InvalidOperationException(message);
 
 /// <summary>Controls instances owned by one named scope on a local Linux Docker engine.</summary>
@@ -42,6 +43,14 @@ public sealed class PodHost : IDisposable
     SemaphoreSlim Gate(string id) => gates[(uint)StringComparer.Ordinal.GetHashCode(id) % gates.Length];
     string Name(string id) => $"dotnetpod.{scope}.{id}";
 
+    public async Task<string[]> InstalledImagesAsync(CancellationToken ct = default)
+    {
+        using var response = await client.GetAsync($"{Api}/images/json", ct);
+        await Check(response, ct);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
+        return doc.RootElement.EnumerateArray().Select(row => row.GetProperty("Id").GetString()!).ToArray();
+    }
+
     public async Task<IReadOnlyList<string>> ListAsync(CancellationToken ct = default)
     {
         var filter = JsonSerializer.Serialize(new { label = new[] { Owner + "=" + scope } });
@@ -74,10 +83,16 @@ public sealed class PodHost : IDisposable
             throw new PodConflictException($"Instance name {id} is owned by another application.");
         var state = root.GetProperty("State");
         var status = state.GetProperty("Status").GetString()!;
-        var ready = status == "running" && (!state.TryGetProperty("Health", out var health) ||
+        var hasHealth = state.TryGetProperty("Health", out var health);
+        var ready = status == "running" && (!hasHealth ||
             health.GetProperty("Status").GetString() == "healthy");
+        DateTimeOffset? heartbeat = null;
+        if (hasHealth && health.TryGetProperty("Log", out var log) && log.ValueKind == JsonValueKind.Array && log.GetArrayLength() > 0 &&
+            long.TryParse(log[log.GetArrayLength() - 1].GetProperty("Output").GetString()?.Trim(), out var seconds) &&
+            seconds is >= 0 and <= 253402300799)
+            heartbeat = DateTimeOffset.FromUnixTimeSeconds(seconds);
         return new(id, root.GetProperty("Id").GetString()!, revision.GetString()!, status, ready,
-            root.GetProperty("RestartCount").GetInt64());
+            root.GetProperty("RestartCount").GetInt64(), state.TryGetProperty("StartedAt", out var start) && start.TryGetDateTimeOffset(out var at) ? at : default, heartbeat);
     }
 
     public async Task<PodStatus> EnsureAsync(PodSpec spec, CancellationToken ct = default)
@@ -139,7 +154,10 @@ public sealed class PodHost : IDisposable
         var mounts = new List<object>();
         void Mount(string path, string target, bool readOnly) => mounts.Add(new
         {
-            Type = "bind", Source = path, Target = target, ReadOnly = readOnly,
+            Type = "bind",
+            Source = path,
+            Target = target,
+            ReadOnly = readOnly,
             BindOptions = new { Propagation = "rprivate", NonRecursive = true }
         });
         Mount(spec.Application, "/app", true);
@@ -151,23 +169,43 @@ public sealed class PodHost : IDisposable
         }
         return new
         {
-            spec.Image, User = $"{PodSpec.UserId}:{PodSpec.UserId}", WorkingDir = "/app",
-            Entrypoint = new[] { "dotnet" }, Cmd = new[] { "/app/" + spec.EntryPoint }.Concat(spec.Arguments ?? []),
+            spec.Image,
+            User = $"{PodSpec.UserId}:{PodSpec.UserId}",
+            WorkingDir = "/app",
+            Entrypoint = new[] { "dotnet" },
+            Cmd = new[] { "/app/" + spec.EntryPoint }.Concat(spec.Arguments ?? []),
             Env = new[] { "HOME=/tmp", "DOTNET_EnableDiagnostics=0", "DOTNET_CLI_TELEMETRY_OPTOUT=1" },
-            Labels = new Dictionary<string,string> { [Owner] = scope, [Instance] = spec.Id, [Revision] = spec.Fingerprint },
-            Healthcheck = spec.ReadinessFile == null ? (object)new { Test = new[] { "NONE" } } :
-                new { Test = new[] { "CMD", "/usr/bin/test", "-f", "/tmp/" + spec.ReadinessFile }, Interval = 2000000000L, Timeout = 1000000000L, Retries = 2 },
+            Labels = new Dictionary<string, string> { [Owner] = scope, [Instance] = spec.Id, [Revision] = spec.Fingerprint },
+            Healthcheck = Healthcheck(spec),
             HostConfig = new
             {
-                Mounts = mounts, NetworkMode = "none", IpcMode = "private", CgroupnsMode = "private",
-                ReadonlyRootfs = true, CapDrop = new[] { "ALL" }, SecurityOpt = new[] { "no-new-privileges=true" },
-                Memory = (long)spec.MemoryMiB << 20, MemorySwap = (long)spec.MemoryMiB << 20,
-                NanoCpus = (long)spec.MilliCpu * 1000000, PidsLimit = spec.Pids,
-                Tmpfs = new Dictionary<string,string> { ["/tmp"] = "rw,nosuid,nodev,noexec,size=32m,mode=1777" },
-                LogConfig = new { Type = "json-file", Config = new Dictionary<string,string> { ["max-size"] = "4m", ["max-file"] = "2" } },
+                Mounts = mounts,
+                NetworkMode = "none",
+                IpcMode = "private",
+                CgroupnsMode = "private",
+                ReadonlyRootfs = true,
+                CapDrop = new[] { "ALL" },
+                SecurityOpt = new[] { "no-new-privileges=true" },
+                Memory = (long)spec.MemoryMiB << 20,
+                MemorySwap = (long)spec.MemoryMiB << 20,
+                NanoCpus = (long)spec.MilliCpu * 1000000,
+                PidsLimit = spec.Pids,
+                Tmpfs = new Dictionary<string, string> { ["/tmp"] = "rw,nosuid,nodev,noexec,size=32m,mode=1777" },
+                LogConfig = new { Type = "json-file", Config = new Dictionary<string, string> { ["max-size"] = "4m", ["max-file"] = "2" } },
                 RestartPolicy = new { Name = "unless-stopped" }
             }
         };
+    }
+
+    static object Healthcheck(PodSpec spec)
+    {
+        if (spec.LivenessFile == null && spec.ReadinessFile == null) return new { Test = new[] { "NONE" } };
+        string[] command = spec.LivenessFile == null ? ["CMD", "/usr/bin/test", "-f", "/tmp/" + spec.ReadinessFile] :
+            ["CMD", "/bin/sh", "-c", """
+                /usr/bin/stat -c %Y -- "/tmp/$1" 2>/dev/null
+                [ -z "$2" ] || /usr/bin/test -f "/tmp/$2"
+                """, "health", spec.LivenessFile, spec.ReadinessFile ?? ""];
+        return new { Test = command, Interval = 2000000000L, Timeout = 1000000000L, Retries = 2 };
     }
 
     static async Task Check(HttpResponseMessage result, CancellationToken ct)

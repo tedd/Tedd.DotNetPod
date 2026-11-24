@@ -7,11 +7,18 @@ namespace Tedd.DotNetPod;
 /// <summary>Daemon-local paths are supplied by the trusted host operator.</summary>
 public sealed record PodSpec(string Id, string Image, string Application, string EntryPoint, string Data,
     int MemoryMiB = 256, int MilliCpu = 1000, int Pids = 128, string? MeshSocket = null,
-    string? MeshKey = null, string[]? Arguments = null, string? ReadinessFile = null)
+    string? MeshKey = null, string[]? Arguments = null, string? ReadinessFile = null, string? LivenessFile = null)
 {
     public const int UserId = 1654;
-    public string Fingerprint => Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
-        new { Id, Image, Application, EntryPoint, Data, MemoryMiB, MilliCpu, Pids, MeshSocket, MeshKey, Arguments, ReadinessFile })));
+    public string Fingerprint
+    {
+        get
+        {
+            object identity = new { Id, Image, Application, EntryPoint, Data, MemoryMiB, MilliCpu, Pids, MeshSocket, MeshKey, Arguments, ReadinessFile };
+            if (LivenessFile != null) identity = new { Spec = identity, LivenessFile };
+            return Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(identity)));
+        }
+    }
 
     public static void ValidateId(string value)
     {
@@ -26,8 +33,8 @@ public sealed record PodSpec(string Id, string Image, string Application, string
             throw new ArgumentException("An installed immutable image ID is required.");
         if (EntryPoint is null || !Regex.IsMatch(EntryPoint, @"\A[A-Za-z0-9_][A-Za-z0-9._-]{0,180}\.dll\z"))
             throw new ArgumentException("EntryPoint must name a DLL in the application directory.");
-        if (ReadinessFile != null && !Regex.IsMatch(ReadinessFile, @"\A[A-Za-z0-9_][A-Za-z0-9._-]{0,100}\z"))
-            throw new ArgumentException("Invalid readiness marker.");
+        if (ReadinessFile != null) ValidateMarker(ReadinessFile);
+        if (LivenessFile != null) ValidateMarker(LivenessFile);
         if (MemoryMiB is < 64 or > 1048576 || MilliCpu is < 10 or > 256000 || Pids is < 16 or > 32768)
             throw new ArgumentOutOfRangeException(nameof(MemoryMiB), "Invalid resource limit.");
         if ((MeshSocket == null) != (MeshKey == null)) throw new ArgumentException("Supply both mesh mounts.");
@@ -39,5 +46,11 @@ public sealed record PodSpec(string Id, string Image, string Application, string
             throw new ArgumentException("Mount sources overlap.");
         if (Arguments is { Length: > 128 } || Arguments?.Any(s => s == null || s.Length > 8192 || s.Contains('\0')) == true)
             throw new ArgumentException("Invalid program arguments.");
+    }
+
+    public static void ValidateMarker(string value)
+    {
+        if (value is null || !Regex.IsMatch(value, @"\A[A-Za-z0-9_][A-Za-z0-9._-]{0,100}\z"))
+            throw new ArgumentException("Invalid health marker.");
     }
 }

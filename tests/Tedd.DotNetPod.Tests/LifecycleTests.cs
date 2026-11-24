@@ -7,20 +7,35 @@ namespace Tedd.DotNetPod.Tests;
 
 public class LifecycleTests
 {
-    internal static PodSpec Spec => new("sample", "sha256:" + new string('1',64), "/srv/app", "Sample.dll", "/srv/data");
+    internal static PodSpec Spec => new("sample", "sha256:" + new string('1', 64), "/srv/app", "Sample.dll", "/srv/data");
 
     [Theory]
-    [InlineData("")][InlineData("x/y")][InlineData("A")][InlineData("-x")][InlineData("x\n")][InlineData("a.b")]
+    [InlineData("")]
+    [InlineData("x/y")]
+    [InlineData("A")]
+    [InlineData("-x")]
+    [InlineData("x\n")]
+    [InlineData("a.b")]
     public void InvalidIdentity(string id) => Assert.Throws<ArgumentException>(() => (Spec with { Id = id }).Validate());
 
     [Theory]
-    [InlineData("/")][InlineData("relative")][InlineData("/a/../b")][InlineData("/a/./b")][InlineData("/a//b")]
-    [InlineData("/srv/app")][InlineData("/srv/app/child")][InlineData("/srv")][InlineData("/x/")]
+    [InlineData("/")]
+    [InlineData("relative")]
+    [InlineData("/a/../b")]
+    [InlineData("/a/./b")]
+    [InlineData("/a//b")]
+    [InlineData("/srv/app")]
+    [InlineData("/srv/app/child")]
+    [InlineData("/srv")]
+    [InlineData("/x/")]
     public void RejectsAmbiguousOrOverlappingMounts(string path) =>
         Assert.Throws<ArgumentException>(() => (Spec with { Data = path }).Validate());
 
     [Theory]
-    [InlineData("../app.dll")][InlineData("/etc/x.dll")][InlineData("a.exe")][InlineData("a\nb.dll")]
+    [InlineData("../app.dll")]
+    [InlineData("/etc/x.dll")]
+    [InlineData("a.exe")]
+    [InlineData("a\nb.dll")]
     public void InvalidEntrypoint(string value) => Assert.Throws<ArgumentException>(() => (Spec with { EntryPoint = value }).Validate());
 
     [Fact]
@@ -38,7 +53,7 @@ public class LifecycleTests
     {
         using var engine = new Engine();
         using var host = new PodHost("test", engine);
-        var states = await Task.WhenAll(Enumerable.Range(0,64).Select(_ => Task.Run(() => host.EnsureAsync(Spec))));
+        var states = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() => host.EnsureAsync(Spec))));
         Assert.All(states, s => Assert.True(s.Ready));
         Assert.Equal(1, engine.Created);
         using var recovered = new PodHost("test", engine);
@@ -47,7 +62,7 @@ public class LifecycleTests
         await recovered.StopAsync("sample");
         Assert.Equal("exited", (await host.InspectAsync("sample"))!.State);
         Assert.True((await host.EnsureAsync(Spec)).Ready);
-        await Task.WhenAll(Enumerable.Range(0,32).Select(_ => host.UnloadAsync("sample")));
+        await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => host.UnloadAsync("sample")));
         Assert.Null(await host.InspectAsync("sample"));
     }
 
@@ -79,7 +94,7 @@ public class LifecycleTests
         using var host = new PodHost("test", engine);
         await Assert.ThrowsAsync<IOException>(() => host.EnsureAsync(Spec));
         Assert.True((await host.EnsureAsync(Spec)).Ready);
-        Assert.Equal(1,engine.Created);
+        Assert.Equal(1, engine.Created);
     }
 
     [Fact]
@@ -93,12 +108,12 @@ public class LifecycleTests
         Assert.Equal("none", cfg.GetProperty("NetworkMode").GetString());
         Assert.Equal("ALL", cfg.GetProperty("CapDrop")[0].GetString());
         Assert.True(cfg.GetProperty("ReadonlyRootfs").GetBoolean());
-        Assert.Equal(256L << 20,cfg.GetProperty("Memory").GetInt64());
-        Assert.Equal(1000000000L,cfg.GetProperty("NanoCpus").GetInt64());
-        Assert.Equal(128,cfg.GetProperty("PidsLimit").GetInt32());
-        Assert.Equal("1654:1654",root.GetProperty("User").GetString());
-        Assert.Equal(new[]{true,false,true,true},cfg.GetProperty("Mounts").EnumerateArray().Select(m=>m.GetProperty("ReadOnly").GetBoolean()));
-        Assert.Equal("CMD",root.GetProperty("Healthcheck").GetProperty("Test")[0].GetString());
+        Assert.Equal(256L << 20, cfg.GetProperty("Memory").GetInt64());
+        Assert.Equal(1000000000L, cfg.GetProperty("NanoCpus").GetInt64());
+        Assert.Equal(128, cfg.GetProperty("PidsLimit").GetInt32());
+        Assert.Equal("1654:1654", root.GetProperty("User").GetString());
+        Assert.Equal(new[] { true, false, true, true }, cfg.GetProperty("Mounts").EnumerateArray().Select(m => m.GetProperty("ReadOnly").GetBoolean()));
+        Assert.Equal("CMD", root.GetProperty("Healthcheck").GetProperty("Test")[0].GetString());
     }
 
     sealed class Engine : HttpMessageHandler
@@ -120,9 +135,14 @@ public class LifecycleTests
             else if (State == null) return new(HttpStatusCode.NotFound);
             else if (path.EndsWith("/json"))
             {
-                var body = JsonSerializer.Serialize(new { Id = "123", RestartCount = 0,
-                    Config = new { Labels = Foreign ? (object)new {} : Config.GetProperty("Labels") }, State = new { Status = State } });
-                return new(HttpStatusCode.OK) { Content = new StringContent(body,Encoding.UTF8,"application/json") };
+                var body = JsonSerializer.Serialize(new
+                {
+                    Id = "123",
+                    RestartCount = 0,
+                    Config = new { Labels = Foreign ? (object)new { } : Config.GetProperty("Labels") },
+                    State = new { Status = State }
+                });
+                return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
             }
             else if (path.EndsWith("/start")) State = "running";
             else if (path.EndsWith("/stop")) State = "exited";

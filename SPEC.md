@@ -14,6 +14,8 @@ The tuple of operator scope and instance ID names one engine object. A SHA-256 f
 
 Running and Ready are distinct states. An optional marker under /tmp enables an engine health probe that calls /usr/bin/test. A program must remove the marker if it loses readiness. Without a probe, Running counts as Ready. The engine's unless-stopped policy restarts exited programs and resumes eligible instances after engine restart. Replacements require explicit unload. Processes with health failures remain inspectable.
 
+LivenessFile optionally names a second marker under /tmp. The engine samples its modification time inside the running container and exposes it as LastHeartbeat. Images using this option must supply /bin/sh and /usr/bin/stat. Supervisors can distinguish a stalled program from one that is temporarily unable to receive new traffic.
+
 ## Invocation
 
 Publish the application for .NET 11 on Linux. Install a compatible runtime image on the local engine and obtain its immutable sha256 image ID using docker image inspect. Create the writable directory with UID 1654 access. Run the following commands with a .NET 11 SDK. The CLI uses /var/run/docker.sock by default. DOTNETPOD_SOCKET selects another local engine.
