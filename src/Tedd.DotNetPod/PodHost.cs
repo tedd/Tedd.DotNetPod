@@ -97,8 +97,8 @@ public sealed class PodHost : IDisposable
 
     public async Task<PodStatus> EnsureAsync(PodSpec spec, CancellationToken ct = default)
     {
+        spec = spec with { Arguments = spec.Arguments?.ToArray(), DirectoryMounts = spec.DirectoryMounts?.ToArray() };
         spec.Validate();
-        spec = spec with { Arguments = spec.Arguments?.ToArray() };
         var gate = Gate(spec.Id);
         await gate.WaitAsync(ct);
         try
@@ -162,6 +162,7 @@ public sealed class PodHost : IDisposable
         });
         Mount(spec.Application, "/app", true);
         Mount(spec.Data, "/data", false);
+        foreach (var mapping in spec.DirectoryMounts ?? []) Mount(mapping.Source, mapping.Target, false);
         if (spec.MeshSocket != null)
         {
             Mount(spec.MeshSocket, "/mesh/agent.sock", true);

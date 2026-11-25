@@ -116,6 +116,41 @@ public class LifecycleTests
         Assert.Equal("CMD", root.GetProperty("Healthcheck").GetProperty("Test")[0].GetString());
     }
 
+    [Fact]
+    public async Task DirectoryMappingsAreWritableBindsAndPartOfThePodIdentity()
+    {
+        var spec = Spec with { DirectoryMounts = [new("/srv/logs", "/app/logs"), new("/srv/state", "/var/lib/sample")] };
+        using var engine = new Engine();
+        using var host = new PodHost("test", engine);
+        await host.EnsureAsync(spec);
+        var mounts = engine.Config.GetProperty("HostConfig").GetProperty("Mounts").EnumerateArray()
+            .ToDictionary(m => m.GetProperty("Target").GetString()!);
+        foreach (var mapping in spec.DirectoryMounts!)
+        {
+            var mount = mounts[mapping.Target];
+            Assert.Equal(mapping.Source, mount.GetProperty("Source").GetString());
+            Assert.False(mount.GetProperty("ReadOnly").GetBoolean());
+        }
+        Assert.True(mounts["/app"].GetProperty("ReadOnly").GetBoolean());
+        Assert.Equal(spec.Fingerprint, (spec with { DirectoryMounts = [spec.DirectoryMounts![1], spec.DirectoryMounts[0]] }).Fingerprint);
+        Assert.Equal(Spec.Fingerprint, (Spec with { DirectoryMounts = [] }).Fingerprint);
+        await Assert.ThrowsAsync<PodConflictException>(() => host.EnsureAsync(spec with { DirectoryMounts = [new("/srv/logs", "/logs")] }));
+    }
+
+    [Theory]
+    [InlineData("/srv/data/logs", "/logs")]
+    [InlineData("/srv/logs", "/app/Sample.dll")]
+    [InlineData("/srv/logs", "/app")]
+    [InlineData("/srv/logs", "/mesh/key")]
+    [InlineData("/srv/logs", "/tmp/ready")]
+    [InlineData("/srv/logs", "/sys")]
+    [InlineData("/srv/logs", "/usr/bin/test")]
+    [InlineData("/srv/logs", "/bin")]
+    [InlineData("/srv/logs", "/etc/hosts")]
+    [InlineData("/srv/logs", "/x/../app")]
+    public void RejectsUnsafeDirectoryMappings(string source, string target) =>
+        Assert.Throws<ArgumentException>(() => (Spec with { DirectoryMounts = [new(source, target)] }).Validate());
+
     sealed class Engine : HttpMessageHandler
     {
         public JsonElement Config;

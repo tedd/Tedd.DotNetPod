@@ -8,6 +8,8 @@ Each instance gets an independent PID namespace, hostname, private IPC namespace
 
 The writable /data mount persists across stops and unloads. Supply a separate source per instance for private data or an explicitly shared volume for concurrent access. Mesh-enabled applications receive a read-only Unix socket at /mesh/agent.sock and one application key file at /mesh/key. The engine socket is reserved for the host. A network policy belongs to the HostMesh identity associated with that key.
 
+Use `DirectoryMounts` to bind additional writable directories into a pod. Each `Source` is a daemon-local absolute path to an existing directory. Provision it with UID 1654 write access and protect its parent from workload writes. Each `Target` is an absolute container path. For a target below `/app`, include the mount point directory in the published application. Source directories must be disjoint. Targets must be disjoint from each other and from the pod's reserved mounts.
+
 ## Lifecycle
 
 The tuple of operator scope and instance ID names one engine object. A SHA-256 fingerprint covers the full launch specification. Concurrent ensure operations converge on the engine's unique name, verify ownership and fingerprint, and start a created or stopped instance. An incompatible existing instance returns a conflict. Stop delivers the image stop signal with a configurable deadline followed by forced termination. Unload stops and removes the specific container ID, preserving bind-mounted files. A fresh host object reconstructs status from engine metadata. An interrupted operation can be retried with the same specification.
@@ -27,6 +29,7 @@ Publish the application for .NET 11 on Linux. Install a compatible runtime image
   "Application": "/srv/releases/web-42",
   "EntryPoint": "Web.dll",
   "Data": "/srv/data/web-a",
+  "DirectoryMounts": [{ "Source": "/srv/logs/web-a", "Target": "/logs" }],
   "MemoryMiB": 256,
   "MilliCpu": 500,
   "Pids": 128
