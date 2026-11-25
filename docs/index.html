@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run framework-dependent .NET applications in isolated Linux containers with DotNetPod, a CLI and library for local Docker Engine hosts.">
+  <title>Tedd.DotNetPod · .NET container host</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header><div class="wrap bar">
+    <a class="brand" href="#main">TEDD <span>/</span> DOTNETPOD</a>
+    <nav aria-label="Main navigation"><a href="#lifecycle">Lifecycle</a><a href="https://github.com/tedd/Tedd.DotNetPod">GitHub</a></nav>
+  </div></header>
+  <main id="main">
+    <section class="hero"><div class="wrap split">
+      <div>
+        <p class="label">.NET 11 CLI &amp; library</p>
+        <h1>Run .NET apps in <em>isolated Linux containers.</em></h1>
+        <p class="lede">Give DotNetPod a published DLL, a runtime image and a data directory. Manage each instance by name on your local Docker Engine.</p>
+        <a class="button" href="https://github.com/tedd/Tedd.DotNetPod#run-the-sample">Run the sample</a>
+      </div>
+      <figure>
+        <figcaption><span>Container filesystem</span><code>demo / worker</code></figcaption>
+        <div class="terminal"><small>ENTRY POINT</small><code>dotnet /app/Fixture.dll report</code></div>
+        <dl>
+          <div><dt>/app</dt><dd>Published application <b>Read-only</b></dd></div>
+          <div><dt>/data</dt><dd>Host data directory <b>Persistent</b></dd></div>
+          <div><dt>/tmp</dt><dd>Scratch space and health markers <b>32 MiB tmpfs</b></dd></div>
+        </dl>
+      </figure>
+    </div></section>
+    <section class="wrap section" id="lifecycle">
+      <p class="label">Instance lifecycle</p>
+      <h2>From specification to shutdown</h2>
+      <div class="steps">
+        <article><h3><code>run</code></h3><p>Start the DLL with its configured limits. Repeating the same specification finds the existing instance.</p></article>
+        <article><h3><code>status</code></h3><p>Inspect state and restart count. A readiness marker lets the app signal when it can accept work.</p></article>
+        <article><h3><code>stop</code> / <code>unload</code></h3><p>Stop an instance to resume it later. Unload it to remove the container and reuse its data with a replacement.</p></article>
+      </div>
+    </section>
+    <section class="dark"><div class="wrap split">
+      <div><p class="label">Operator guide</p><h2>Inspect your first worker</h2>
+        <p>The sample worker records its runtime version, hostname and Linux resource limits. Compare its reported readiness with the file it writes to the host.</p>
+        <a href="https://github.com/tedd/Tedd.DotNetPod#run-the-sample">Prepare the fixture and pod specification</a>
+      </div>
+      <pre aria-label="Commands after preparing the sample"><code>dotnet run --project src/Tedd.DotNetPod -- \
+  run demo "$sample/pod.json"
+
+dotnet run --project src/Tedd.DotNetPod -- \
+  status demo worker
+
+cat "$sample/data/report"</code></pre>
+    </div></section>
+  </main>
+  <footer><div class="wrap bar"><span>Tedd.DotNetPod</span><a href="https://github.com/tedd/Tedd.DotNetPod/blob/main/SPEC.md">Runtime specification</a></div></footer>
+</body>
+</html>
